@@ -76,24 +76,12 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 	//    - comm->width : The with of the local sub-domain (containing the ghost cells)
 	//    - comm->height : The height of the local sub-domain (containing the ghost cells)
 	
-	// Envoyer ses cellules à gauche donc pas pour le 1er
-	if(comm->rank_x > 0) {
-		for(int i = 0; i < comm->height; i++){
-			MPI_Send(
-				lbm_mesh_get_cell(mesh, comm->x, i), // pointer to buffer
-				DIRECTIONS, // number of elements of particular type
-				MPI_DOUBLE, // type of elements in buffer
-				comm->rank_x-1, // destination rank
-				123, // tag for send (must match tag for receive)
-				MPI_COMM_WORLD // communicator to use
-			);
-		}
-	}
-	// Echange pour avoir ses gosht cells droite donc pas pour le dernier
+
+	// Envoyer ses cells vers la droite : 
 	if(comm->rank_x != comm->nb_x-1 ) {
 		for(int i = 0; i < comm->height; i++){
 			MPI_Send(
-				lbm_mesh_get_cell(mesh, comm->x + comm->width-1, i), // pointer to buffer
+				lbm_mesh_get_cell(mesh, comm->x + comm->width-2, i), // pointer to buffer
 				DIRECTIONS, // number of elements of particular type
 				MPI_DOUBLE, // type of elements in buffer
 				comm->rank_x+1, // destination rank
@@ -118,7 +106,23 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 			);
 		}
 	}
-	if(comm->rank_x < comm->nb_x-1) {
+
+	// Envoyer ses cellules à gauche donc pas pour le 1er
+	if(comm->rank_x > 0) {
+		for(int i = 0; i < comm->height; i++){
+			MPI_Send(
+				lbm_mesh_get_cell(mesh, comm->x+1, i), // pointer to buffer
+				DIRECTIONS, // number of elements of particular type
+				MPI_DOUBLE, // type of elements in buffer
+				comm->rank_x-1, // destination rank
+				123, // tag for send (must match tag for receive)
+				MPI_COMM_WORLD // communicator to use
+			);
+		}
+	}
+
+	// Recevoir de la droite
+	if(comm->rank_x != comm->nb_x-1) {
 		for(int i = 0; i < comm->height; i++) {
 			MPI_Recv(
 				lbm_mesh_get_cell(mesh, comm->x + comm->width-1, i), // pointer to buffer to write data to
@@ -131,6 +135,7 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 			);
 		}
 	}
+	
 	
 	//example to access cell
 	//double * cell = lbm_mesh_get_cell(mesh, local_x, local_y);
