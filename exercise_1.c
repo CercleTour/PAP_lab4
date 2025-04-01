@@ -22,6 +22,7 @@ COURSE  : Parallel Algorithms and Programming
 #include "src/lbm_struct.h"
 #include "src/exercises.h"
 #include "mpi.h"
+#include <stdbool.h>
 
 /****************************************************/
 void lbm_comm_init_ex1(lbm_comm_t * comm, int total_width, int total_height)
@@ -76,12 +77,17 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 	//    - comm->width : The with of the local sub-domain (containing the ghost cells)
 	//    - comm->height : The height of the local sub-domain (containing the ghost cells)
 	
+	bool first = comm->rank_x == 0;
+	bool last = comm->rank_x == comm->nb_x-1;
 
+	int height = comm->height;
+	int width = comm->width;
+	
 	// Envoyer ses cells vers la droite : 
-	if(comm->rank_x != comm->nb_x-1 ) {
-		for(int i = 0; i < comm->height; i++){
+	if(!last) {
+		for(int i = 0; i < height; i++){
 			MPI_Send(
-				lbm_mesh_get_cell(mesh, comm->x + comm->width-2, i), // pointer to buffer
+				lbm_mesh_get_cell(mesh, width-2, i), // pointer to buffer
 				DIRECTIONS, // number of elements of particular type
 				MPI_DOUBLE, // type of elements in buffer
 				comm->rank_x+1, // destination rank
@@ -92,11 +98,11 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 	}
 	
 	// Recevoir de la gauche
-	if(comm->rank_x != 0) {
+	if(!first) {
 		// TODO : Utiliser lbm_mesh_get_cell dans le recv dans 
-		for(int i = 0; i < comm->height; i++) {
+		for(int i = 0; i < height; i++) {
 			MPI_Recv(
-				lbm_mesh_get_cell(mesh, comm->x , i), // pointer to buffer to write data to
+				lbm_mesh_get_cell(mesh, 0 , i), // pointer to buffer to write data to
 				DIRECTIONS, // max. capacity of elements in buffer
 				MPI_DOUBLE, // type of elements in buffer
 				comm->rank_x-1, // source rank
@@ -106,12 +112,12 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 			);
 		}
 	}
-
+	
 	// Envoyer ses cellules à gauche donc pas pour le 1er
-	if(comm->rank_x > 0) {
-		for(int i = 0; i < comm->height; i++){
+	if(!first) {
+		for(int i = 0; i < height; i++){
 			MPI_Send(
-				lbm_mesh_get_cell(mesh, comm->x+1, i), // pointer to buffer
+				lbm_mesh_get_cell(mesh, 1, i), // pointer to buffer
 				DIRECTIONS, // number of elements of particular type
 				MPI_DOUBLE, // type of elements in buffer
 				comm->rank_x-1, // destination rank
@@ -120,12 +126,12 @@ void lbm_comm_ghost_exchange_ex1(lbm_comm_t * comm, lbm_mesh_t * mesh)
 			);
 		}
 	}
-
+	
 	// Recevoir de la droite
-	if(comm->rank_x != comm->nb_x-1) {
-		for(int i = 0; i < comm->height; i++) {
+	if(!last) {
+		for(int i = 0; i < height; i++) {
 			MPI_Recv(
-				lbm_mesh_get_cell(mesh, comm->x + comm->width-1, i), // pointer to buffer to write data to
+				lbm_mesh_get_cell(mesh, width-1, i), // pointer to buffer to write data to
 				DIRECTIONS, // max. capacity of elements in buffer
 				MPI_DOUBLE, // type of elements in buffer
 				comm->rank_x+1, // source rank
