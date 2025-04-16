@@ -27,7 +27,7 @@
 /****************************************************/
 void lbm_comm_init_ex3(lbm_comm_t * comm, int total_width, int total_height)
 {
-	//we use the same implementation then ex1
+	//we use the same implementation than ex1
 	lbm_comm_init_ex1(comm, total_width, total_height);
 }
 
