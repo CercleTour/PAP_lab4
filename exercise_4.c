@@ -22,15 +22,16 @@
 
 /****************************************************/
 #include "src/lbm_struct.h"
-#include "src/exercises.h"
+#include "src/exercises.h" 
 #include "mpi.h"
+#include <math.h>
 
 /****************************************************/
 void lbm_comm_init_ex4(lbm_comm_t * comm, int total_width, int total_height)
 {
 
 	//calculate the splitting parameters for the current task.
-	int world_size, int world_rank;
+	int world_size, world_rank;
 	MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 	MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
