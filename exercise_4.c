@@ -23,33 +23,38 @@
 /****************************************************/
 #include "src/lbm_struct.h"
 #include "src/exercises.h"
+#include "mpi.h"
 
 /****************************************************/
 void lbm_comm_init_ex4(lbm_comm_t * comm, int total_width, int total_height)
 {
-	//
-	// TODO: calculate the splitting parameters for the current task.
-	//
 
-	// TODO: calculate the number of tasks along X axis and Y axis.
-	comm->nb_x = -1;
-	comm->nb_y = -1;
+	//calculate the splitting parameters for the current task.
+	int world_size, int world_rank;
+	MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-	// TODO: calculate the current task position in the splitting
-	comm->rank_x = -1;
-	comm->rank_y = -1;
 
-	// TODO : calculate the local sub-domain size (do not forget the 
-	//        ghost cells). Use total_width & total_height as starting 
-	//        point.
-	comm->width = -1;
-	comm->height = -1;
+
+
+	//calculate the number of tasks along X axis and Y axis.
+	comm->nb_x = (int) sqrt(world_size);
+	comm->nb_y = world_size / comm->nb_x;
+	
+
+	//calculate the current task position in the splitting
+	comm->rank_x = world_rank % comm->nb_x;
+	comm->rank_y = world_rank / comm->nb_x;
+
+	//calculate the local sub-domain size (do not forget the ghost cells). Use total_width & total_height as starting point.
+	comm->width = total_width / comm->nb_x + 2;
+	comm->height = total_height / comm->nb_y + 2;
 
 	// TODO : calculate the absolute position  (in cell number) in the global mesh.
 	//        without accounting the ghost cells
 	//        (used to setup the obstable & initial conditions).
-	comm->x = -1;
-	comm->y = -1;
+	comm->x = comm->rank_x * (total_width / comm->nb_x);
+	comm->y = comm->rank_y * (total_height / comm->nb_y);
 
 	//OPTIONAL : if you want to avoid allocating temporary copy buffer
 	//           for every step :
@@ -60,9 +65,12 @@ void lbm_comm_init_ex4(lbm_comm_t * comm, int total_width, int total_height)
 }
 
 /****************************************************/
-void lbm_comm_release_ex4(lbm_comm_t * comm)
-{
-	//free allocated ressources
+void lbm_comm_release_ex4(lbm_comm_t * comm){
+	// TODO: free the temporary buffers
+	free(comm->buffer_recv_down);
+	free(comm->buffer_recv_up);
+	free(comm->buffer_send_down);
+	free(comm->buffer_send_up);
 }
 
 /****************************************************/
