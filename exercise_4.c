@@ -1,9 +1,9 @@
 /*****************************************************
-	AUTHOR  : Sébastien Valat
-	MAIL    : sebastien.valat@univ-grenoble-alpes.fr
-	LICENSE : BSD
-	YEAR    : 2021
-	COURSE  : Parallel Algorithms and Programming
+    AUTHOR  : Sébastien Valat
+    MAIL    : sebastien.valat@univ-grenoble-alpes.fr
+    LICENSE : BSD
+    YEAR    : 2021
+    COURSE  : Parallel Algorithms and Programming
 *****************************************************/
 
 //////////////////////////////////////////////////////
@@ -20,179 +20,199 @@
 //
 //////////////////////////////////////////////////////
 
+/****************************************************/
+
+#include "mpi.h"
 #include "src/lbm_struct.h"
-#include "src/exercises.h"
+#include "src/exercises.h" 
+
+
+//////////////////////////////////////////////////////
 #include <math.h>
-#include <mpi.h>
 #include <string.h>
-#include <stdlib.h>
-#include <stdio.h>
 
-void lbm_comm_init_ex4(lbm_comm_t *comm, int total_width, int total_height)
+/****************************************************/
+void lbm_comm_init_ex4(lbm_comm_t * comm, int total_width, int total_height)
 {
-	int size, rank;
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    //
+    // TODO: calculate the splitting parameters for the current task.
+    //
+    int rank, size;
 
-	comm->nb_y = (int)sqrt(size);
-	while (size % comm->nb_y != 0)
-		comm->nb_y--;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-	comm->nb_x = size / comm->nb_y;
+    // TODO: calculate the number of tasks along X axis and Y axis.
 
-	comm->rank_x = rank % comm->nb_x;
-	comm->rank_y = rank / comm->nb_x;
+    comm->nb_x = (int)(sqrt(size));
+    comm->nb_y = (int)(size / comm->nb_x);
 
-	int local_width = total_width / comm->nb_x;
-	int local_height = total_height / comm->nb_y;
+    if (comm->nb_x * comm->nb_y != size || total_width % comm->nb_x != 0 || total_height % comm->nb_y != 0) {
+        fprintf(stderr, "Error: Invalid number of processes or domain size.\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
 
-	comm->width = local_width + 2;
-	comm->height = local_height + 2;
+    // TODO: calculate the current task position in the splitting
+    comm->rank_x = rank % comm->nb_x;
+    comm->rank_y = rank / comm->nb_x;
 
-	comm->x = comm->rank_x * local_width;
-	comm->y = comm->rank_y * local_height;
+    // TODO : calculate the local sub-domain size (do not forget the 
+    //        ghost cells). Use total_width & total_height as starting 
+    //        point.
+    comm->width = total_width / comm->nb_x + 2;
+    comm->height = total_height / comm->nb_y + 2;
 
-	int ghost_line_size = (comm->width - 2) * DIRECTIONS;
-	comm->buffer_send_up = malloc(ghost_line_size * sizeof(double));
-	comm->buffer_recv_up = malloc(ghost_line_size * sizeof(double));
-	comm->buffer_send_down = malloc(ghost_line_size * sizeof(double));
-	comm->buffer_recv_down = malloc(ghost_line_size * sizeof(double));
+    // TODO : calculate the absolute position  (in cell number) in the global mesh.
+    //        without accounting the ghost cells
+    //        (used to setup the obstable & initial conditions).
+    comm->x = (comm->rank_x * total_width) / comm->nb_x;
+    comm->y = (comm->rank_y * total_height) / comm->nb_y;
 
-	if (!comm->buffer_send_up || !comm->buffer_recv_up ||
-		!comm->buffer_send_down || !comm->buffer_recv_down)
-	{
-		fprintf(stderr, "malloc failed\n");
-		MPI_Abort(MPI_COMM_WORLD, 1);
-	}
+    //OPTIONAL : if you want to avoid allocating temporary copy buffer
+    //           for every step :
+    //comm->buffer_recv_down, comm->buffer_recv_up, comm->buffer_send_down, comm->buffer_send_up
+    comm->buffer_recv_down = malloc(comm->width * DIRECTIONS * sizeof(double));
+    comm->buffer_recv_up = malloc(comm->width * DIRECTIONS * sizeof(double));
+    comm->buffer_send_down = malloc(comm->width * DIRECTIONS * sizeof(double));
+    comm->buffer_send_up = malloc(comm->width * DIRECTIONS * sizeof(double));
+    if (!comm->buffer_recv_down || !comm->buffer_recv_up || !comm->buffer_send_down || !comm->buffer_send_up) {
+        fprintf(stderr, "Error: Failed to allocate memory for buffers.\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
 
-	lbm_comm_init_ex1(comm, total_width, total_height);
+    //if debug print comm
+    //lbm_comm_print(comm);
 }
 
-void lbm_comm_release_ex4(lbm_comm_t *comm)
+/****************************************************/
+void lbm_comm_release_ex4(lbm_comm_t * comm)
 {
-	free(comm->buffer_send_up);
-	free(comm->buffer_recv_up);
-	free(comm->buffer_send_down);
-	free(comm->buffer_recv_down);
-	comm->buffer_send_up = comm->buffer_recv_up = NULL;
-	comm->buffer_send_down = comm->buffer_recv_down = NULL;
+    //free allocated ressources
+    free(comm->buffer_recv_down);
+    free(comm->buffer_recv_up);
+    free(comm->buffer_send_down);
+    free(comm->buffer_send_up);
 }
 
-void getRank(int *rank_x, int *rank_y, int x, int y, int nb_x, int nb_y)
-{
-	*rank_x = (x + nb_x) % nb_x;
-	*rank_y = (y + nb_y) % nb_y;
+void copy_to_buffer(double *buffer, int start_x, int start_y, int width, int height, lbm_mesh_t *mesh) {
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            double *cell = lbm_mesh_get_cell(mesh, start_x + x, start_y + y);
+            memcpy(buffer + (y * width + x) * DIRECTIONS, cell, DIRECTIONS * sizeof(double));
+        }
+    }
 }
 
-void lbm_comm_ghost_exchange_ex4(lbm_comm_t *comm, lbm_mesh_t *mesh)
+void copy_from_buffer(double *buffer, int start_x, int start_y, int width, int height, lbm_mesh_t *mesh) {
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            double *cell = lbm_mesh_get_cell(mesh, start_x + x, start_y + y);
+            memcpy(cell, buffer + (y * width + x) * DIRECTIONS, DIRECTIONS * sizeof(double));
+        }
+    }
+}
+
+int get_neighbor_rank(int dx, int dy, lbm_comm_t *comm) {
+    //printf("get_neighbor_rank : rank %d dx %d dy %d\n", comm->rank_x, dx, dy);
+    int new_x = comm->rank_x + dx;
+    int new_y = comm->rank_y + dy;
+    if (new_x < 0 || new_x >= comm->nb_x || new_y < 0 || new_y >= comm->nb_y) {
+        return MPI_PROC_NULL; // No neighbor
+    }
+    //printf("get_neighbor_rank : rank %d new_x %d new_y %d\n", comm->rank_x, new_x, new_y);
+    return new_y * comm->nb_x + new_x;
+}
+
+
+/****************************************************/
+void lbm_comm_ghost_exchange_ex4(lbm_comm_t * comm, lbm_mesh_t * mesh)
 {
-	int rank;
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Status status;
 
-	int width = comm->width;
-	int height = comm->height;
-	int rx = comm->rank_x;
-	int ry = comm->rank_y;
-	int nbx = comm->nb_x;
-	int nby = comm->nb_y;
+    int ranks[8];
+    
+    // Left/Right communications
+    ranks[0] = get_neighbor_rank(-1, 0, comm); // Left
+    ranks[1] = get_neighbor_rank(1, 0, comm);  // Right
 
-	// Déterminer les voisins (MPI_PROC_NULL si hors grille)
-	int left = (rx > 0) ? rank - 1 : MPI_PROC_NULL;
-	int right = (rx < nbx - 1) ? rank + 1 : MPI_PROC_NULL;
-	int top = (ry > 0) ? rank - nbx : MPI_PROC_NULL;
-	int bottom = (ry < nby - 1) ? rank + nbx : MPI_PROC_NULL;
+    // Left-right exchange
+    // When ranks[0] is MPI_PROC_NULL (leftmost process), no actual send/receive will happen
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, 1, 0), comm->height * DIRECTIONS, MPI_DOUBLE, ranks[0], 0,
+        lbm_mesh_get_cell(mesh, 0, 0), comm->height * DIRECTIONS, MPI_DOUBLE, ranks[0], 0,
+        MPI_COMM_WORLD, &status
+    );
+    
+    // When ranks[1] is MPI_PROC_NULL (rightmost process), no actual send/receive will happen
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, comm->width - 2, 0), comm->height * DIRECTIONS, MPI_DOUBLE, ranks[1], 0,
+        lbm_mesh_get_cell(mesh, comm->width - 1, 0), comm->height * DIRECTIONS, MPI_DOUBLE, ranks[1], 0,
+        MPI_COMM_WORLD, &status
+    );
 
-	int top_left = (left != MPI_PROC_NULL && top != MPI_PROC_NULL) ? top - 1 : MPI_PROC_NULL;
-	int top_right = (right != MPI_PROC_NULL && top != MPI_PROC_NULL) ? top + 1 : MPI_PROC_NULL;
-	int bottom_left = (left != MPI_PROC_NULL && bottom != MPI_PROC_NULL) ? bottom - 1 : MPI_PROC_NULL;
-	int bottom_right = (right != MPI_PROC_NULL && bottom != MPI_PROC_NULL) ? bottom + 1 : MPI_PROC_NULL;
+    // Top/Bottom communications
+    ranks[2] = get_neighbor_rank(0, -1, comm); // Top
+    ranks[3] = get_neighbor_rank(0, 1, comm);  // Bottom
 
-	// --- LEFT/RIGHT communication (contiguous) ---
-	for (int i = 1; i < height - 1; i++)
-	{
-		// Send left
-		MPI_Sendrecv(
-			lbm_mesh_get_cell(mesh, 1, i), DIRECTIONS, MPI_DOUBLE, left, 0,
-			lbm_mesh_get_cell(mesh, width - 1, i), DIRECTIONS, MPI_DOUBLE, right, 0,
-			MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-		// Send right
-		MPI_Sendrecv(
-			lbm_mesh_get_cell(mesh, width - 2, i), DIRECTIONS, MPI_DOUBLE, right, 1,
-			lbm_mesh_get_cell(mesh, 0, i), DIRECTIONS, MPI_DOUBLE, left, 1,
-			MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	}
+    // Top exchange
+    copy_to_buffer(comm->buffer_send_up, 0, 1, comm->width, 1, mesh);
+    MPI_Sendrecv(
+        comm->buffer_send_up, comm->width * DIRECTIONS, MPI_DOUBLE, ranks[2], 0,
+        comm->buffer_recv_up, comm->width * DIRECTIONS, MPI_DOUBLE, ranks[2], 0,
+        MPI_COMM_WORLD, &status
+    );
+    // Only copy from buffer if we have a top neighbor
+    if (ranks[2] != MPI_PROC_NULL) {
+        copy_from_buffer(comm->buffer_recv_up, 0, 0, comm->width, 1, mesh);
+    }
 
-	// --- TOP/BOTTOM (non-contiguous → buffer) ---
-	for (int x = 1; x < width - 1; x++)
-	{
-		memcpy(&comm->buffer_send_up[(x - 1) * DIRECTIONS], lbm_mesh_get_cell(mesh, x, 1), DIRECTIONS * sizeof(double));
-		memcpy(&comm->buffer_send_down[(x - 1) * DIRECTIONS], lbm_mesh_get_cell(mesh, x, height - 2), DIRECTIONS * sizeof(double));
-	}
+    // Bottom exchange
+    copy_to_buffer(comm->buffer_send_down, 0, comm->height - 2, comm->width, 1, mesh);
+    MPI_Sendrecv(
+        comm->buffer_send_down, comm->width * DIRECTIONS, MPI_DOUBLE, ranks[3], 0,
+        comm->buffer_recv_down, comm->width * DIRECTIONS, MPI_DOUBLE, ranks[3], 0,
+        MPI_COMM_WORLD, &status
+    );
+    // Only copy from buffer if we have a bottom neighbor
+    if (ranks[3] != MPI_PROC_NULL) {
+        copy_from_buffer(comm->buffer_recv_down, 0, comm->height - 1, comm->width, 1, mesh);
+    }
 
-	// Debug: Afficher les buffers avant l'envoi
-	if (rank == 0)
-	{
-		printf("Send_down buffer: ");
-		for (int i = 0; i < (width - 2) * DIRECTIONS; ++i)
-			printf("%f ", comm->buffer_send_down[i]);
-		printf("\n");
+    // Diagonal communications
+    ranks[4] = get_neighbor_rank(-1, -1, comm); // Top-left
+    ranks[5] = get_neighbor_rank(1, -1, comm);  // Top-right
+    ranks[6] = get_neighbor_rank(-1, 1, comm);  // Bottom-left
+    ranks[7] = get_neighbor_rank(1, 1, comm);   // Bottom-right
 
-		printf("Send_up buffer: ");
-		for (int i = 0; i < (width - 2) * DIRECTIONS; ++i)
-			printf("%f ", comm->buffer_send_up[i]);
-		printf("\n");
-	}
+    // Top-left exchange
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, 1, 1), DIRECTIONS, MPI_DOUBLE, ranks[4], 0,
+        lbm_mesh_get_cell(mesh, 0, 0), DIRECTIONS, MPI_DOUBLE, ranks[4], 0,
+        MPI_COMM_WORLD, &status
+    );
 
-	// TOP → BOTTOM
-	MPI_Sendrecv(comm->buffer_send_down, (width - 2) * DIRECTIONS, MPI_DOUBLE, bottom, 0,
-				 comm->buffer_recv_up, (width - 2) * DIRECTIONS, MPI_DOUBLE, top, 1,
-				 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    // Top-right exchange
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, comm->width - 2, 1), DIRECTIONS, MPI_DOUBLE, ranks[5], 0,
+        lbm_mesh_get_cell(mesh, comm->width - 1, 0), DIRECTIONS, MPI_DOUBLE, ranks[5], 0,
+        MPI_COMM_WORLD, &status
+    );
 
-	// BOTTOM → TOP
-	MPI_Sendrecv(comm->buffer_send_up, (width - 2) * DIRECTIONS, MPI_DOUBLE, top, 2,
-				 comm->buffer_recv_down, (width - 2) * DIRECTIONS, MPI_DOUBLE, bottom, 3,
-				 MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    // Bottom-left exchange
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, 1, comm->height - 2), DIRECTIONS, MPI_DOUBLE, ranks[6], 0,
+        lbm_mesh_get_cell(mesh, 0, comm->height - 1), DIRECTIONS, MPI_DOUBLE, ranks[6], 0,
+        MPI_COMM_WORLD, &status
+    );
 
-	// Debug: Afficher les buffers après la réception
-	if (rank == 0)
-	{
-		printf("Recv_up buffer: ");
-		for (int i = 0; i < (width - 2) * DIRECTIONS; ++i)
-			printf("%f ", comm->buffer_recv_up[i]);
-		printf("\n");
-
-		printf("Recv_down buffer: ");
-		for (int i = 0; i < (width - 2) * DIRECTIONS; ++i)
-			printf("%f ", comm->buffer_recv_down[i]);
-		printf("\n");
-	}
-
-	// Copier les données reçues dans le maillage
-	for (int x = 1; x < width - 1; x++)
-	{
-		memcpy(lbm_mesh_get_cell(mesh, x, 0), &comm->buffer_recv_up[(x - 1) * DIRECTIONS], DIRECTIONS * sizeof(double));
-		memcpy(lbm_mesh_get_cell(mesh, x, height - 1), &comm->buffer_recv_down[(x - 1) * DIRECTIONS], DIRECTIONS * sizeof(double));
-	}
-
-	// --- Corners (diagonales) ---
-	// top-left
-	MPI_Sendrecv(
-		lbm_mesh_get_cell(mesh, 1, 1), DIRECTIONS, MPI_DOUBLE, top_left, 0,
-		lbm_mesh_get_cell(mesh, width - 1, height - 1), DIRECTIONS, MPI_DOUBLE, bottom_right, 0,
-		MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	// top-right
-	MPI_Sendrecv(
-		lbm_mesh_get_cell(mesh, width - 2, 1), DIRECTIONS, MPI_DOUBLE, top_right, 0,
-		lbm_mesh_get_cell(mesh, 0, height - 1), DIRECTIONS, MPI_DOUBLE, bottom_left, 0,
-		MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	// bottom-left
-	MPI_Sendrecv(
-		lbm_mesh_get_cell(mesh, 1, height - 2), DIRECTIONS, MPI_DOUBLE, bottom_left, 0,
-		lbm_mesh_get_cell(mesh, width - 1, 0), DIRECTIONS, MPI_DOUBLE, top_right, 0,
-		MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	// bottom-right
-	MPI_Sendrecv(
-		lbm_mesh_get_cell(mesh, width - 2, height - 2), DIRECTIONS, MPI_DOUBLE, bottom_right, 0,
-		lbm_mesh_get_cell(mesh, 0, 0), DIRECTIONS, MPI_DOUBLE, top_left, 0,
-		MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    // Bottom-right exchange
+    MPI_Sendrecv(
+        lbm_mesh_get_cell(mesh, comm->width - 2, comm->height - 2), DIRECTIONS, MPI_DOUBLE, ranks[7], 0,
+        lbm_mesh_get_cell(mesh, comm->width - 1, comm->height - 1), DIRECTIONS, MPI_DOUBLE, ranks[7], 0,
+        MPI_COMM_WORLD, &status
+    );
 }
